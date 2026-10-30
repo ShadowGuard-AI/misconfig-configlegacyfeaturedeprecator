@@ -1,3 +1,5 @@
+![Banner](banner.png)
+
 # misconfig-ConfigLegacyFeatureDeprecator
 Identifies and flags deprecated features or configuration parameters within config files, helping users migrate to newer configurations. - Focused on Check for misconfigurations in configuration files or infrastructure definitions
 
