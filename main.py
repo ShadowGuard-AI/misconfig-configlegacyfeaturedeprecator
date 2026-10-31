@@ -27,6 +27,9 @@ class ConfigLegacyFeatureDeprecator:
         self.config_file = config_file
         self.config_type = config_type.lower()
         self.deprecated_features_file = deprecated_features_file
+        self.config_load_failed = False
+        self.config_empty = False
+        self.features_load_failed = False
         self.deprecated_features = self.load_deprecated_features()
         self.config_data = self.load_config_data()
 
@@ -41,19 +44,25 @@ class ConfigLegacyFeatureDeprecator:
         """
         if not os.path.exists(self.config_file):
             logging.error(f"Configuration file not found: {self.config_file}")
+            self.config_load_failed = True
             return None
 
         try:
             with open(self.config_file, 'r') as f:
                 if self.config_type == 'yaml':
-                    return yaml.safe_load(f)
+                    data = yaml.safe_load(f)
                 elif self.config_type == 'json':
-                    return json.load(f)
+                    data = json.load(f)
                 else:
                     logging.error(f"Unsupported configuration type: {self.config_type}")
+                    self.config_load_failed = True
                     return None
+            if data is None:
+                self.config_empty = True
+            return data
         except Exception as e:
             logging.error(f"Error loading configuration file: {e}")
+            self.config_load_failed = True
             return None
 
 
@@ -67,6 +76,7 @@ class ConfigLegacyFeatureDeprecator:
         """
         if not os.path.exists(self.deprecated_features_file):
             logging.error(f"Deprecated features file not found: {self.deprecated_features_file}")
+            self.features_load_failed = True
             return None
 
         try:
@@ -74,6 +84,7 @@ class ConfigLegacyFeatureDeprecator:
                 return json.load(f)
         except Exception as e:
             logging.error(f"Error loading deprecated features file: {e}")
+            self.features_load_failed = True
             return None
     def find_deprecated_features(self, data, path=""):
         """
@@ -109,9 +120,18 @@ class ConfigLegacyFeatureDeprecator:
         """
         Runs the deprecation checker.
         """
-        if not self.config_data or not self.deprecated_features:
-            logging.error("Failed to load configuration data or deprecated features.  Exiting.")
-            return []
+        if self.config_load_failed or self.features_load_failed:
+            logging.error("Loading failed: the configuration or deprecated features file could not be loaded. Exiting.")
+            return None
+        if self.deprecated_features is not None and not isinstance(self.deprecated_features, dict):
+            logging.error(f"Deprecated features file must hold a JSON object mapping feature names to details, got {type(self.deprecated_features).__name__}. Exiting.")
+            return None
+        if not self.deprecated_features:
+            logging.error("Deprecated features file is empty. Nothing was checked. Exiting.")
+            return None
+        if self.config_empty or not self.config_data:
+            logging.error("Configuration file is empty. Nothing was checked. Exiting.")
+            return None
 
         deprecated_features_found = self.find_deprecated_features(self.config_data)
 
@@ -160,6 +180,8 @@ def main():
     deprecator = ConfigLegacyFeatureDeprecator(args.config_file, args.config_type, args.deprecated_features_file)
     deprecated_features = deprecator.run()
 
+    if deprecated_features is None:
+        sys.exit(1)  # Loading, empty input, or a wrongly typed features file
     if deprecated_features:
         sys.exit(2) # Exit with a code indicating deprecated features were found
     else:
@@ -169,7 +191,7 @@ if __name__ == "__main__":
     # Example Usage:
     # Create a sample config file (test_config.yaml)
     # Create a sample deprecated features file (deprecated_features.json)
-    # Run the script: python misconfig_ConfigLegacyFeatureDeprecator.py --config-file test_config.yaml --config-type yaml --deprecated-features-file deprecated_features.json
+    # Run the script: python3 main.py --config-file test_config.yaml --config-type yaml --deprecated-features-file deprecated_features.json
 
     # Example Content for test_config.yaml:
     # api_version: v1
