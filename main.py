@@ -30,6 +30,10 @@ class ConfigLegacyFeatureDeprecator:
         self.config_load_failed = False
         self.config_empty = False
         self.features_load_failed = False
+        # Both files are loaded here, in the constructor, before run
+        # gets any say. Constructing this object is therefore an IO
+        # operation, and the flags set by the loaders are the only
+        # record of what went wrong until run reads them.
         self.deprecated_features = self.load_deprecated_features()
         self.config_data = self.load_config_data()
 
@@ -50,6 +54,10 @@ class ConfigLegacyFeatureDeprecator:
         try:
             with open(self.config_file, 'r') as f:
                 if self.config_type == 'yaml':
+                    # The parser comes from the required type flag, never from
+                    # the file name. Declaring a JSON document as yaml succeeds,
+                    # because YAML reads JSON, while declaring YAML as json fails
+                    # in the loader and is reported as a load failure.
                     data = yaml.safe_load(f)
                 elif self.config_type == 'json':
                     data = json.load(f)
@@ -102,12 +110,21 @@ class ConfigLegacyFeatureDeprecator:
         if isinstance(data, dict):
             for key, value in data.items():
                 new_path = f"{path}.{key}" if path else key
+                # A name is all I match on, at any depth. The same word used
+                # as an unrelated setting inside a newer section is flagged
+                # as the deprecated feature, and a deprecated feature set to
+                # false, switched off, is flagged exactly like a live one,
+                # because the value is never looked at.
                 if key in self.deprecated_features:
                     deprecated_found.append({
                         "feature": key,
                         "path": new_path,
                         "deprecation_info": self.deprecated_features[key]
                     })
+                # I keep walking into a matched key's value, so a deprecated
+                # feature whose own settings contain another deprecated name
+                # produces both findings. The paths are the only way a reader
+                # can tell the nested one sits inside the first.
                 deprecated_found.extend(self.find_deprecated_features(value, new_path))
         elif isinstance(data, list):
             for i, item in enumerate(data):
@@ -133,6 +150,11 @@ class ConfigLegacyFeatureDeprecator:
             logging.error("Configuration file is empty. Nothing was checked. Exiting.")
             return None
 
+        # A config that parses to a plain scalar reaches this call and
+        # finds nothing, because the search only understands mappings
+        # and lists. run then returns an empty list and main exits 0,
+        # a clean verdict for a file that held no checkable settings
+        # at all, unlike an empty file, which the checks above refuse.
         deprecated_features_found = self.find_deprecated_features(self.config_data)
 
         if deprecated_features_found:
@@ -183,6 +205,11 @@ def main():
     if deprecated_features is None:
         sys.exit(1)  # Loading, empty input, or a wrongly typed features file
     if deprecated_features:
+        # Two is a deliberate third state: 0 means checked and clean,
+        # 1 means I could not check, and 2 means I checked and found.
+        # A caller using the usual success or failure test reads 2
+        # as failure, which is the safe direction, but a caller that
+        # compares against 1 alone would miss the findings.
         sys.exit(2) # Exit with a code indicating deprecated features were found
     else:
         sys.exit(0) # Normal exit with no deprecated features
